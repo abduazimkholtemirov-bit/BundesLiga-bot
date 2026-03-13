@@ -8,11 +8,15 @@ import threading
 from flask import Flask
 
 # ===== НАСТРОЙКИ =====
-TOKEN = "8478758651:AAETj4C8fG8uRhU9K_lHjTiN_Hx3AY3rqJg"  # вставь свой токен
-# Если ты добавлял проверку на свой user_id, вставь его сюда (число)
-ALLOWED_USER_ID = 123456789  # замени на свой ID (или удали, если не нужно)
+# Читаем токен из переменной окружения (должна быть задана на Render)
+TOKEN = os.environ.get("TELEGRAM_TOKEN")
+if not TOKEN:
+    raise ValueError("No TELEGRAM_TOKEN environment variable set")
 
-# Хранилище (в памяти) — для Render сойдёт, но при перезапуске данные пропадут
+# ⚠️ ЗАМЕНИ ЭТО ЧИСЛО НА СВОЙ TELEGRAM ID (узнай у @userinfobot)
+ALLOWED_USER_ID = 123456789  # <--- ВСТАВЬ СВОЙ ID СЮДА
+
+# Хранилище данных (в памяти) — при перезапуске данные теряются
 user_tournaments = {}
 user_team = {}
 
@@ -49,96 +53,94 @@ def extract_tournament_id(text):
         return match.group(1)
     return text.strip()
 
-# ===== ПРОВЕРКА НА ВЛАДЕЛЬЦА (если нужно) =====
+# ===== ПРОВЕРКА НА ВЛАДЕЛЬЦА =====
 def is_allowed(user_id):
-    # Если ALLOWED_USER_ID задан, проверяем; иначе доступ всем
-    if ALLOWED_USER_ID is None:
-        return True
     return user_id == ALLOWED_USER_ID
 
 # ===== ОБРАБОТЧИКИ КОМАНД =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_allowed(update.effective_user.id):
-        await update.message.reply_text("Этот бот только для владельца.")
-        return
+    # /start доступен всем (без проверки)
     await update.message.reply_text(
-        "Привет! Я помогу подсчитать очки игроков твоей команды по турнирам Lichess.\n"
-        "Команды:\n"
+        "Привет! Я помогаю подсчитывать очки игроков команды по турнирам Lichess.\n\n"
+        "📊 **Команды:**\n"
+        "/total — показать суммарные очки игроков команды (доступно всем)\n\n"
+        "🔒 **Команды только для владельца:**\n"
         "/setteam ник1 ник2 ... — задать список игроков команды\n"
         "/add <ссылка или ID турнира> — добавить турнир\n"
-        "/total — показать суммарные очки игроков команды\n"
         "/clear — очистить список турниров\n"
         "/clearteam — очистить список команды"
     )
 
 async def set_team(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Только для владельца
     if not is_allowed(update.effective_user.id):
-        await update.message.reply_text("Доступ запрещён.")
+        await update.message.reply_text("❌ Доступ запрещён. Эта команда только для владельца.")
         return
     chat_id = update.effective_chat.id
     if not context.args:
-        await update.message.reply_text("Укажи ники игроков через пробел.")
+        await update.message.reply_text("Укажи ники игроков через пробел, например:\n/setteam ZEROO1391 Maksimligotnis")
         return
     team = context.args
     user_team[chat_id] = [nick.lower() for nick in team]
-    await update.message.reply_text(f"Команда сохранена: {', '.join(team)}")
+    await update.message.reply_text(f"✅ Команда сохранена: {', '.join(team)}")
 
 async def add_tournament(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Только для владельца
     if not is_allowed(update.effective_user.id):
-        await update.message.reply_text("Доступ запрещён.")
+        await update.message.reply_text("❌ Доступ запрещён. Эта команда только для владельца.")
         return
     chat_id = update.effective_chat.id
     if not context.args:
-        await update.message.reply_text("Укажи ссылку или ID турнира.")
+        await update.message.reply_text("Укажи ссылку или ID турнира, например:\n/add https://lichess.org/tournament/abc123")
         return
     raw_input = context.args[0]
     tournament_id = extract_tournament_id(raw_input)
     if chat_id not in user_tournaments:
         user_tournaments[chat_id] = []
     user_tournaments[chat_id].append(tournament_id)
-    await update.message.reply_text(f"Турнир {tournament_id} добавлен. Всего в списке: {len(user_tournaments[chat_id])}")
+    await update.message.reply_text(f"✅ Турнир {tournament_id} добавлен. Всего в списке: {len(user_tournaments[chat_id])}")
 
 async def total(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_allowed(update.effective_user.id):
-        await update.message.reply_text("Доступ запрещён.")
-        return
+    # Доступно ВСЕМ (без проверки)
     chat_id = update.effective_chat.id
     if chat_id not in user_tournaments or not user_tournaments[chat_id]:
-        await update.message.reply_text("Список турниров пуст.")
+        await update.message.reply_text("📭 Список турниров пуст. Владелец ещё не добавил турниры.")
         return
     if chat_id not in user_team or not user_team[chat_id]:
-        await update.message.reply_text("Сначала задай список команды через /setteam")
+        await update.message.reply_text("👥 Список команды ещё не задан. Владелец должен выполнить /setteam")
         return
-    await update.message.reply_text("Собираю данные с Lichess...")
+    await update.message.reply_text("🔄 Собираю данные с Lichess, это может занять несколько секунд...")
     scores = aggregate_scores(user_tournaments[chat_id])
     team_nicks = user_team[chat_id]
     team_scores = {p: s for p, s in scores.items() if p.lower() in team_nicks}
     if not team_scores:
-        await update.message.reply_text("Никто из команды не найден в турнирах.")
+        await update.message.reply_text("😕 Никто из игроков команды не найден в добавленных турнирах.")
         return
     sorted_scores = sorted(team_scores.items(), key=lambda x: x[1], reverse=True)
-    lines = ["**Суммарные очки игроков команды:**"]
+    lines = ["**📊 Суммарные очки игроков команды:**"]
     for player, total_score in sorted_scores:
-        lines.append(f"{player}: {total_score}")
+        lines.append(f"• {player}: {total_score}")
     await update.message.reply_text("\n".join(lines))
 
 async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Только для владельца
     if not is_allowed(update.effective_user.id):
-        await update.message.reply_text("Доступ запрещён.")
+        await update.message.reply_text("❌ Доступ запрещён.")
         return
     chat_id = update.effective_chat.id
     if chat_id in user_tournaments:
         user_tournaments[chat_id] = []
-    await update.message.reply_text("Список турниров очищен.")
+    await update.message.reply_text("🗑 Список турниров очищен.")
 
 async def clear_team(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Только для владельца
     if not is_allowed(update.effective_user.id):
-        await update.message.reply_text("Доступ запрещён.")
+        await update.message.reply_text("❌ Доступ запрещён.")
         return
     chat_id = update.effective_chat.id
     if chat_id in user_team:
         del user_team[chat_id]
-    await update.message.reply_text("Список команды очищен.")
+    await update.message.reply_text("🗑 Список команды очищен.")
 
 # ===== ЗАПУСК БОТА В ФОНЕ =====
 application = Application.builder().token(TOKEN).build()
@@ -150,7 +152,7 @@ application.add_handler(CommandHandler("clear", clear))
 application.add_handler(CommandHandler("clearteam", clear_team))
 
 def run_bot():
-    print("Бот запущен в фоне...")
+    print("🤖 Бот запущен в фоне...")
     application.run_polling()
 
 # ===== FLASK-СЕРВЕР ДЛЯ RENDER =====
@@ -158,7 +160,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Бот работает!"
+    return "Бот работает! 🤖"
 
 @app.route('/health')
 def health():
@@ -172,3 +174,5 @@ if __name__ == "__main__":
     # Запускаем Flask-сервер
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+        
+   
