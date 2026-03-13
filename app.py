@@ -14,7 +14,7 @@ if not TOKEN:
     raise ValueError("No TELEGRAM_TOKEN environment variable set")
 
 # ⚠️ ЗАМЕНИ ЭТО ЧИСЛО НА СВОЙ TELEGRAM ID (узнай у @userinfobot)
-ALLOWED_USER_ID = 123456789  # <--- ВСТАВЬ СВОЙ ID СЮДА
+ALLOWED_USER_ID = 783515622  # <--- ВСТАВЬ СВОЙ ID СЮДА
 
 # Хранилище данных (в памяти) — при перезапуске данные теряются
 user_tournaments = {}
